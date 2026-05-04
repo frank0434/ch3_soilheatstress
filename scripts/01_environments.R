@@ -1,6 +1,14 @@
 source("scripts/00_setup.R")
 
+# ==============================================================================
+# LOAD DATA
+# ==============================================================================
 daily_temp_data <- fread("data/daily_weather.csv", skip = 1)
+
+# ==============================================================================
+# WEATHER FIGURE (Figure 1)
+# ==============================================================================
+# Panel A: daily rainfall (bars) with Tmin/Tmean/Tmax lines
 # rain  -------------------------------------------------------------------
 
 p1 <- ggplot(daily_temp_data, aes(x = DAP)) +
@@ -79,6 +87,11 @@ weather_plot <- (p1 +
   theme(legend.position = "top")
 save_plot(weather_plot, "fig1_weather")
 
+# ==============================================================================
+# TREATMENT PERIOD WEATHER METRICS
+# ==============================================================================
+# Summarise mean air temperature and cumulative radiation within each heating
+# period for reporting in the methods/results tables
 # treatment period weather metrics ----------------------------------------
 # Get DAP ranges for each treatment period
 
@@ -101,6 +114,9 @@ sum_rad_periods <- rad_periods[, .(rad_mean = mean(IRRAD) |> round(),
                                    rad_sum= sum(IRRAD) |> round()), by = .(Treatment = variable)]
 weather_metric_periods <- mean_temps[sum_rad_periods, on = "Treatment"]
 
+# ==============================================================================
+# SOIL TEMPERATURE ANALYSIS (Figure 2)
+# ==============================================================================
 # soil and treatment verification -----------------------------------------
 # Summary stats #!!! Plot 8 
 soil_temperature_daily <- fread("data/soil_temperature_daily.csv")
@@ -192,8 +208,12 @@ air_temp_p <- ggplot(data = daily_temp_data)+
 
 soil_air_p <- soil_temp_sd_p /air_temp_p + plot_layout(heights = c(2,1.5))
 save_plot(soil_air_p, "fig2_soil_air_daily")
-## the soil temperature is already averaged across blocks!!!!
+# the soil temperature is already averaged across blocks
 
+# ==============================================================================
+# TREATMENT PERIOD STATISTICS (Table S1)
+# ==============================================================================
+# Filter daily soil temperature records to each treatment application period
 ## filtering  daily value ------------------------------------------------------
 HE_24 <- soil_temperature_daily[
       Season == 2024 &
@@ -220,19 +240,8 @@ HB_25 <- soil_temperature_daily[
         Treatment %in% c("AC", "HB")
     ]
 
-## calculating the mean, max and min, and difference between treatments for each period
-calculate_temp_stats <- function(data, 
-                                 grouping_vars = c("Season","Treatment", "Depth")) {
-  data[, .(
-    mean_temp = round(mean(mean_temp, na.rm = TRUE)),
-# the max, min etc doesn't make sense anymore since it would calculate temporal max and mins
-    max_temp = round(max(mean_temp, na.rm = TRUE)),
-    min_temp = round(min(mean_temp, na.rm = TRUE)),
-    n = .N,
-    sd = round(sd(mean_temp, na.rm = TRUE), 1)
-  ), by = grouping_vars]
-}
-
+# calculate_temp_stats() is defined in utilities.R and computes
+# mean/max/min/SD of daily soil temperature for each treatment period
 stats_h1_24 <- calculate_temp_stats(HE_24)
 stats_h2_24 <- calculate_temp_stats(HTI_24)
 stats_h1_25 <- calculate_temp_stats(HTI_25)
@@ -278,8 +287,11 @@ TableS1[, .(Season, Treatment, Days, `Soil temperature at 20 cm` = formatted_20,
              `Ambient soil temperature` = i.formatted_20,
              `Mean air temperature` = sprintf("%.0f%s%.1f", Mean_Temp, "±", sd_Temp),
              Rain, Irrigation, Irradiance = rad_sum)] 
-
-# canopy temperature as a verification of non stressed canopy -------------
+# ==============================================================================
+# CANOPY TEMPERATURE VERIFICATION
+# ==============================================================================
+# Canopy surface temperature was measured with an infrared sensor to verify
+# that non-treated plots remained unstressed during heating periods# canopy temperature as a verification of non stressed canopy -------------
 
 canopy_temp <- fread("data/canopy_temperature.csv")
 # Add date as character for labeling
@@ -287,20 +299,8 @@ canopy_temp[, Date_label := format(Date, "%b %d")]
 canopy_temp_sum <- canopy_temp[, .(mean = mean(canopy_temp),
                                    sd = sd(canopy_temp)), 
                                by = .(Season, Date, DAP, Treatment)]
-# visualise the canopy temperature time series 
-canopy_temp_sum |>
-  ggplot(aes(DAP, mean, color = Treatment)) +
-  geom_point(size = ps, alpha = 0.6, position = position_dodge(width = 5)) +
-  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 3,
-                position = position_dodge(width = 5)) +
-  facet_grid(~Season) +
-  theme_bw(base_size = fontsize, base_family = "Times New Roman") +
-  theme(legend.position = "top",
-        strip.background = element_blank()) +
-  labs(x = "Days After Planting",
-       y = "Canopy Temperature (°C)",
-       color = "Treatment")
-# Timeseries visualization of canopy temperature with air temperature
+
+# Time series of canopy surface temperature with error bars (Figure S)
 canopy_temp_plot <- canopy_temp_sum |>
   ggplot(aes(DAP, mean, shape = Treatment)) +
   geom_point(size = ps, alpha = 0.6, position = position_dodge(width = 6)) +
@@ -312,9 +312,6 @@ canopy_temp_plot <- canopy_temp_sum |>
   ) +
   geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 3, 
                 position = position_dodge(width = 6), alpha = 0.6) +
-  # geom_line(aes(DAP, air_temp_mean, linetype = "Air Temperature"), 
-            # color = "black",
-            # linewidth = lw, alpha = 0.7) +
   facet_wrap(~Season, ncol = 1) +
   scale_y_continuous(
     name = "Surface canopy temperature (°C)",
@@ -322,15 +319,14 @@ canopy_temp_plot <- canopy_temp_sum |>
     expand = c(0, 0)
   ) +
   scale_shape_manual(values = point_shape, breaks = c("AC", "HE", "HTI", "HB")) +
-  # scale_color_manual(values = colors_temp, breaks = c("AC", "HE", "HTI", "HB")) +
   scale_fill_manual(values = colors_temp, breaks = c("AC", "HE", "HTI", "HB")) +
-  # scale_linetype_manual(name = "",values = c("Air Temperature" = "solid")) +
   theme_bw(base_size = fontsize, base_family = "Times New Roman") +
   theme(panel.grid = element_blank()) +
   labs(x = "Days after planting")
 
 print(canopy_temp_plot)
 save_plot(canopy_temp_plot, "FigS9_canopy_temp_timeseries", height = 4, width = 5)
+
 
 
 

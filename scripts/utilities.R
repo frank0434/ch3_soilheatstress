@@ -12,35 +12,6 @@ save_plot <- function(plot, name, width = 7, height = 5, dpi = 300, format = "sv
 }
 
 # ==============================================================================
-# MISSING VALUE HANDLING
-# ==============================================================================
-
-#' Replace NA with 0
-#'
-#' Simple utility to replace missing values with zero.
-#'
-#' @param col numeric vector
-#'
-#' @return numeric vector with NA replaced by 0
-#'
-#' @keywords internal
-replace_NA <- function(col) {
-  ifelse(is.na(col), 0, col)
-}
-
-#' Replace 0 with NA
-#'
-#' Replace zero values with missing value indicator.
-#'
-#' @param col numeric vector
-#'
-#' @return numeric vector with 0 replaced by NA
-#'
-#' @keywords internal
-replace_0 <- function(col) {
-  ifelse(col == 0, NA, col)
-}
-# ==============================================================================
 # SUMMARY STATISTICS AND DATA TRANSFORMATION
 # ==============================================================================
 #' Calculate Summary Statistics
@@ -60,6 +31,38 @@ calculate_summary_stats <- function(dt, value_col, group_vars) {
   summary_dt[, formatted := sprintf("%.0f ± %.1f", mean, se)]
   return(summary_dt)
 }
+
+#' Calculate Temperature Statistics for a Treatment Period
+#'
+#' Computes mean, max, min, n, and SD of daily mean soil temperature
+#' for a given subset of soil temperature data.
+#'
+#' @param data data.table — soil temperature data for a specific treatment period
+#' @param grouping_vars character vector — columns to group by
+#'   (default: Season, Treatment, Depth)
+#'
+#' @return data.table with summarised temperature statistics per group
+calculate_temp_stats <- function(data,
+                                 grouping_vars = c("Season", "Treatment", "Depth")) {
+  data[, .(
+    mean_temp = round(mean(mean_temp, na.rm = TRUE)),
+    # max/min reflect temporal extremes within the period, not between-plot variation
+    max_temp  = round(max(mean_temp,  na.rm = TRUE)),
+    min_temp  = round(min(mean_temp,  na.rm = TRUE)),
+    n         = .N,
+    sd        = round(sd(mean_temp,   na.rm = TRUE), 1)
+  ), by = grouping_vars]
+}
+
+#' Fit Linear Model for Treatment Effect
+#'
+#' Fits a block-corrected linear model (Block + Treatment) and returns
+#' the model, ANOVA table, emmeans estimates, and Tukey pairwise comparisons.
+#'
+#' @param data data.frame or data.table — plot-level data
+#' @param response character — name of the response variable column
+#'
+#' @return list with model, anova, emmeans, and pairs_tukey
 fit_treatment_lm <- function(data, response) {
   model <- stats::lm(
     formula = stats::as.formula(paste(response, "~ Block + Treatment")),
@@ -74,8 +77,9 @@ fit_treatment_lm <- function(data, response) {
   )
 }
 
-
-# fitting curves for light interception data 
+# ==============================================================================
+# CANOPY CURVE FITTING
+# ==============================================================================
 
 #' Optimize Starting Values for Combined Canopy Equation using DEoptim
 #'
@@ -194,63 +198,19 @@ optimize_start_values_combined <- function(clean_data,
   )
 }
 
-## Combined-equation fit for season 2024 
-fit_combined <- function(data) {
-  # data <- cc_td_season[Season == "2024" & Treatment == "H0"]
-  vmax_obs <- max(data$CC, na.rm = TRUE)
-
-  start_vals <- optimize_start_values_combined(
-    clean_data = data,
-    global_vmax = vmax_obs,
-    y_col = "CC",
-    x_col = "td_sum"
-  )
-  if (is.null(start_vals)) {
-    return(NULL)
-  }
-
-  x_min <- min(data$td_sum, na.rm = TRUE)
-  x_max <- max(data$td_sum, na.rm = TRUE)
-  x_range <- x_max - x_min
-  min_gap <- max(0.5, x_range * 0.03)
-
-  lower <- c(
-    tm1 = max(0, x_min),
-    t1 = max(0, x_min) + min_gap,
-    t2 = max(0, x_min) + (2 * min_gap),
-    te = max(0, x_min) + (3 * min_gap),
-    vmax = max(vmax_obs * 0.5, 0.05)
-  )
-  upper <- c(
-    tm1 = max(lower[["tm1"]] + min_gap, x_min + x_range * 0.35),
-    t1 = max(lower[["t1"]] + min_gap, x_min + x_range * 0.6),
-    t2 = max(lower[["t2"]] + min_gap, x_min + x_range * 0.9),
-    te = max(lower[["te"]] + min_gap, x_max + x_range * 0.25),
-    vmax = max(lower[["vmax"]] + 1e-6, vmax_obs * 1.2)
-  )
-
-  tryCatch(
-    minpack.lm::nlsLM(
-      CC ~ combined_equation(td_sum, tm1, t1, t2, te, vmax),
-      data = data,
-      start = start_vals,
-      lower = lower,
-      upper = upper,
-      control = minpack.lm::nls.lm.control(maxiter = 200)
-    ),
-    error = function(e) NULL
-  )
-}
-# BASELINE APPROACH (Standard starting values):
-#   1. get_start_values() - Calculate starting parameters per plot (both eq.)
-#   2. fit_logistic_curve() - Fit logistic curve to plot data
-#   4. fit_gompertz_curve() - Fit Gompertz curve to plot data
-# 
-# OPTIMIZED APPROACH (DEoptim-based starting values):
-#   5. optimize_start_values_logistic() - Find optimal starting values using DEoptim
-#   6. optimize_start_values_gompertz() - Find optimal starting values using DEoptim
-# ==============================================================================
-# Fit the combined canopy model per plot to get robust starts for nlme.
+#' Fit Combined Canopy Model per Plot
+#'
+#' Fits the combined canopy cover equation using DEoptim-derived starting values
+#' and bounded nlsLM optimization. Used for both plot-level and treatment-level fitting.
+#'
+#' @param data data.table — plot or treatment-level light interception data
+#' @param y_col character — response column name (default: "CC")
+#' @param x_col character — thermal time column name (default: "cumtd_DAE")
+#' @param te_cap numeric — upper bound for te; should not exceed the leaf removal
+#'   thermal day (58 in both 2024 and 2025)
+#' @param start_vals list — starting values from optimize_start_values_combined()
+#'
+#' @return nlsLM fit object, or NULL if fitting fails
 fit_combined <- function(data, y_col = "CC", x_col = "cumtd_DAE", te_cap = 58, start_vals = NULL) {
   vmax_obs <- max(data[[y_col]], na.rm = TRUE)
   x_min <- min(data[[x_col]], na.rm = TRUE)
@@ -328,7 +288,14 @@ combined_equation <- function(td_sum, tm1, t1, t2, te, vmax) {
     )
   )
 }
-# calculate r2 for each fit
+# ==============================================================================
+# GRID GENERATION & PREDICTION
+# ==============================================================================
+
+#' Calculate R² for a Non-Linear Least Squares Fit
+#'
+#' @param fit nlsLM fit object, or NULL
+#' @return numeric R² value, or NA if fit is NULL or degenerate
 r2_nls <- function(fit) {
   if (is.null(fit)) {
     return(NA_real_)
@@ -346,6 +313,10 @@ r2_nls <- function(fit) {
 
   1 - sse / sst
 }
+#' Extract Parameter Estimates from a Combined Canopy Fit
+#'
+#' @param fit nlsLM fit object, or NULL
+#' @return data.table with columns tm1, t1, t2, te, vmax (NA if fit is NULL)
 extract_combined_params <- function(fit) {
   if (is.null(fit)) {
     return(data.table(
@@ -367,7 +338,16 @@ extract_combined_params <- function(fit) {
     vmax = unname(est[["vmax"]])
   )
 }
-# Build a daily prediction grid spanning the observed range for each plot.
+#' Build a Daily Prediction Grid for Each Plot
+#'
+#' Creates a fine-resolution thermal time sequence for generating smooth
+#' predicted canopy curves from fitted model parameters.
+#'
+#' @param data data.table — plot-level data with Season, Treatment, Block, PlotID
+#' @param end_time numeric — upper limit of thermal time axis (default: 60)
+#' @param step numeric — resolution of the prediction grid (default: 0.01)
+#'
+#' @return data.table with one row per time step per plot
 generate_time_grid <- function(data, end_time = 60, step = 0.01) {
   time_grid <- data[, .(cumtd_DAE = seq(0, end_time, step)),
                     
@@ -381,6 +361,14 @@ generate_time_grid <- function(data, end_time = 60, step = 0.01) {
   time_grid
 }
 
+# ==============================================================================
+# STATISTICAL SUMMARIES & FORMATTING
+# ==============================================================================
+
+#' Convert p-value to Significance Symbol
+#'
+#' @param p_value numeric p-value
+#' @return character: "**" (p<0.001), "*" (p<0.05), or "ns"
 significance_label <- function(p_value) {
   ifelse(
     is.na(p_value),

@@ -1,14 +1,19 @@
 source("scripts/00_setup.R")
+
+# ==============================================================================
+# LOAD & PREPARE DATA
+# ==============================================================================
 dma_long <- fread("data/drymatter_organs_long.csv")
-#### leaf, stem, tuber, root, stolon in one graph ------------------------------
-# ignore stolon - already in stem
-dma_organs <- dma_long[Organ %in% c("leaf", "stem", "tuber", "dead_canopy", "leaf_stem")] 
-# === 1.1 Summary statistics by organ, treatment, and DAP ===
+
+# Retain the four main organ pools; stolon is excluded (accounted for in stem)
+dma_organs <- dma_long[Organ %in% c("leaf", "stem", "tuber", "dead_canopy", "leaf_stem")]
+# --- Summary statistics by organ, treatment, and DAP ---
 dma_summary <- calculate_summary_stats(dma_organs[!is.na(value)], 
                                        "value", c("Season", "Treatment", "Organ", "DAP"))
 print(dma_summary)
 
-# break HE (2024) line between DAP 53 and 77 by inserting NA
+# Break the HE (2024) line between DAP 53 and 77 by inserting NA at DAP 63
+# This visually represents the gap during which no measurements were taken
 dma_summary_plot <- data.table::rbindlist(list(
   dma_summary,
   data.table(Season = 2024, Treatment = "HE",
@@ -18,24 +23,19 @@ dma_summary_plot <- data.table::rbindlist(list(
 
 treatments_DAP_arrows[, Organ := "Leaf"]
 dma_summary_plot[, Organ := sub("^(.)", "\\U\\1", Organ, perl = TRUE)]
-# order the organs 
+# Capitalise and rename combined leaf+stem organ for figure labels
 dma_summary_plot[Organ == "Leaf_stem", Organ := "Leaf:Stem"]
 dma_summary_plot[, Organ := factor(
   Organ,
   levels = c("Leaf", "Stem", "Leaf:Stem", "Tuber", "Dead_canopy")
 )]
-# output 
-# season-DAP combinations to keep
-dap_keep <- data.table(
-  Season = c(2024L, 2024L, 2025L, 2025L),
-  DAP    = c(42L,   63L,   56L,   83L)
-)
-dma_summary_plot[dap_keep, on = .(Season, DAP)]
-# assemble the labels for annotate the fig
-# all signficance in 2025 - leaf 56 and 83; stem 56; tuber 83
-# Create dataframe for asterisk annotations on 2025 organ figure
 
-
+# ==============================================================================
+# ORGAN-LEVEL DRY MATTER DYNAMICS (Figure 3)
+# ==============================================================================
+# Asterisk annotations mark DAP/organ combinations with significant
+# treatment effects in 2025 (leaf DAP 56 & 83; stem DAP 56; tuber DAP 83)
+# y-positions chosen to sit just above the error bars at each measurement point
 significance_annotations_25 <- data.table(
   DAP = c(56, 83, 83),
   Organ = c("Stem","Leaf", "Tuber"),
@@ -48,7 +48,7 @@ significance_annotations_25[, Organ := factor(
   Organ,
   levels = c("Leaf", "Stem",  "Tuber")
 )]
-# assemble the final organ figure with annotations an-----------------
+# Panel tags (a-f) assigned in reading order: left-to-right, top-to-bottom
 panel_tags <- data.table(
   Organ = factor(
     c("Leaf", "Leaf", "Stem", "Stem", "Tuber", "Tuber"),

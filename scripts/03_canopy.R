@@ -1,15 +1,16 @@
 source("scripts/00_setup.R")
 
-
+# ==============================================================================
+# LOAD & PREPARE DATA
+# ==============================================================================
 li_td_sum <- fread("data/LI_cleaned.csv")
 
-# prepare for fitting 
+# Thermal days at leaf removal: used as te upper bound during curve fitting
+# (te cannot exceed leaf removal since canopy is forcibly terminated at this point)
 leaf_removal_td <- data.table(
   Season = c(2024, 2025),
-  te_fixed = c(59, 58)) # thermal days at leaf removal for each season
+  te_fixed = c(59, 58))
 li_td_sum <- merge(li_td_sum, leaf_removal_td, by = "Season", all.x = TRUE)
-te_fixed_24 <- leaf_removal_td[Season == 2024, te_fixed]
-te_fixed_25 <- leaf_removal_td[Season == 2025, te_fixed]
 
 li_td_sum[, ':='(
   Season = factor(Season), 
@@ -26,6 +27,10 @@ li_plot_fits <- li_td_sum[
 ]
 setorder(li_plot_fits, Season, Treatment, Block, PlotID)
 
+# ==============================================================================
+# PER-PLOT CURVE FITTING
+# ==============================================================================
+# DEoptim finds robust starting values; nlsLM fits the combined canopy equation
 li_plot_fits[, starts := mapply(
   function(x, te) optimize_start_values_combined(x, y_col = "LI", x_col = "cumtd_DAE"),
   data,
@@ -34,7 +39,8 @@ li_plot_fits[, starts := mapply(
 li_plot_fits[, fit := mapply(function(data, start, te) 
   fit_combined(data, y_col = "LI", x_col = "cumtd_DAE", start_vals = start), 
   data, starts,SIMPLIFY = FALSE)]
-li_plot_metrics <- li_plot_fits[, r2 := sapply(fit, r2_nls)]
+# Calculate R² per plot fit (stored in li_plot_fits for optional diagnostics)
+li_plot_fits[, r2 := sapply(fit, r2_nls)]
 li_plot_params <- li_plot_fits[, .(sapply(fit, extract_combined_params, simplify = FALSE)),
    by = .(Season, Treatment, Block, PlotID)
   ][, unlist(V1, recursive = FALSE), by = .(Season, Treatment, Block, PlotID)]
@@ -49,9 +55,13 @@ predictions_all <- merge(
 predictions_all[, prediction := combined_equation(cumtd_DAE, tm1, t1, t2, te, vmax)]
 predictions_all[!is.finite(prediction) | prediction < 0, prediction := 0]
 
-li_plot_params[,delta_t := t2 - t1]
-canopy_param_cols <- c("vmax", "t1","tm1",  "t2","te","delta_t")
+li_plot_params[, delta_t := t2 - t1]  # duration of plateau phase (thermal days)
+canopy_param_cols <- c("vmax", "t1", "tm1", "t2", "te", "delta_t")
 
+# ==============================================================================
+# PARAMETER-LEVEL STATISTICAL MODELS
+# ==============================================================================
+# Separate linear models per season; treatment effects on each canopy parameter
 li_param_models_24_lm <- setNames(lapply(canopy_param_cols, function(param) {
   fit_treatment_lm(li_plot_params[Season == 2024], param)
 }), canopy_param_cols)
@@ -102,7 +112,9 @@ param_LI_pair_25 <- rbindlist(lapply(canopy_param_cols, function(param) {
 rbindlist(list(param_LI_pair_24[,.(contrast, p.value, Season, Parameter, Significant)], 
                param_LI_pair_25[,.(contrast, p.value, Season, Parameter, Significant)]), use.names = TRUE, fill = TRUE) |> 
   fwrite("results/LI_combined_model_parameters_pairwise_comparisons.csv", bom = TRUE)
-# Test HTI and season interaction on t2 and te 
+
+# Test whether the HTI treatment effect on canopy parameters (t2, te) differs
+# between seasons — i.e., does the timing of heat stress interact with season?
 hti_ac_li <- li_plot_params[Treatment %in% c("HTI", "AC")]
 hti_ac_li_mod <- lm(t2 ~ Block + Treatment * Season, data = hti_ac_li)
 shapiro.test(residuals(hti_ac_li_mod))
@@ -125,7 +137,11 @@ li_params_summary |>
   dcast(Season + Treatment ~ variable, value.var = "formatted") |> 
   fwrite("results/LI_combined_model_parameters_summary.csv", bom = TRUE)
 
-# Treatment level fit and predictions for plotting the curves
+# ==============================================================================
+# TREATMENT-LEVEL FITTING & PREDICTIONS
+# ==============================================================================
+# Re-fit the canopy curve at treatment level (pooled data) for plotting smooth
+# mean curves; plot-level parameters above are used for statistical testing
 li_trt_fits <- li_td_sum[
   LI > 0 & is.finite(cumtd_DAE),
   .(data = list(.SD)),
@@ -140,7 +156,8 @@ li_trt_fits[, starts := mapply(
 li_trt_fits[, fit := mapply(function(data, start) 
   fit_combined(data, y_col = "LI", x_col = "cumtd_DAE", start_vals = start), 
   data, starts,SIMPLIFY = FALSE)]
-li_trt_metrics <- li_trt_fits[, r2 := sapply(fit, r2_nls)]
+# Calculate R² for treatment-level fits (stored in li_trt_fits for diagnostics)
+li_trt_fits[, r2 := sapply(fit, r2_nls)]
 li_trt_params <- li_trt_fits[, .(sapply(fit, extract_combined_params, simplify = FALSE)),
    by = .(Season, Treatment)][, unlist(V1, recursive = FALSE), by = .(Season, Treatment)]
 li_trt_params[, curve_dat := mapply(function(tm1, t1, t2, te, vmax) {
@@ -160,7 +177,8 @@ mean_LI_curve <- LI_trt_curve_dt[predictions >= 0
   ][, .(predictions = mean(predictions, na.rm = TRUE)), 
     by = .(Season, Treatment, cumtd_DAE)
   ][, ':=' (Season = as.integer(as.character(Season)))]
-# add dap back 
+# Add corresponding DAP values back from daily_td to enable a dual x-axis
+# (thermal days primary; DAP shown as secondary labels in parentheses)
 daily_td <- fread("data/daily_td.csv")
 x_for_fPAR <- daily_td[,.(Season, DAP, cumtd_DAE = round (cumtd_DAE))
   ][ !is.na(cumtd_DAE)][, .SD[1], by = .(Season, cumtd_DAE)]
@@ -224,6 +242,12 @@ p_fPAR <- mean_LI_curve |>
 
 save_plot(p_fPAR, "fig_6_light_interception", height = 4)
 
+# ==============================================================================
+# RADIATION USE EFFICIENCY (RUE)
+# ==============================================================================
+# Daily intercepted PAR (Rint) = predicted LI x daily radiation (IRRAD)
+# Cumulative intercepted PAR (Rcum) used as the x-axis in RUE regressions
+# RUE (slope) is estimated per plot as: DW ~ PAR, then tested with ANOVA
 # RUE ---------------------------------------------------------------------
 # total Light interception  -----------------------------------------------
 daily_radiation_data <- fread("data/daily_weather.csv", skip = 1)
@@ -309,7 +333,11 @@ shapiro.test(residuals(RUE_all))
 RUE_summary <- calculate_summary_stats(ann, "b1", c("Season", "Treatment"))[]
 RUE_summary[, formatted := sprintf("%.2f ± %.2f", mean, se)] |> 
   fwrite("results/RUE_summary.csv", bom = TRUE)
-
+# ==============================================================================
+# RUE FIGURE (Supplementary)
+# ==============================================================================
+# fcase() label positions are treatment/season-specific to avoid overlapping
+# annotation text on the plot
 ann_trt <- biomass_Rcum[, {
   mm <- lm(total_dw_g_m2 ~ PAR, data = .SD)
   b0 <- coef(mm)[1]

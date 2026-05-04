@@ -1,7 +1,8 @@
-
 source("scripts/00_setup.R")
 
-# 1. TUBER DRY MATTER CONTENT (DMC) - Final Harvest ----------------------------
+# ==============================================================================
+# 1. TUBER DRY MATTER CONTENT (DMC) - Final Harvest
+# ==============================================================================
 
 dmc <- fread("data/dmc_final_harvest.csv")
 dmc[, tuber_dmc := tuber_dmc * 100]  # Convert to percentage
@@ -38,9 +39,11 @@ shapiro.test(scale_model_2025$residuals)  # Check normality of residuals
 shape_model_2025 <- lm(shape ~ Treatment, data = weibull_params)
 shapiro.test(shape_model_2025$residuals)  # Check normality of residuals
 Anova(shape_model_2025)
-scale_emm <- emmeans(scale_model_2025, pairwise ~ Treatment)
+# emmeans(scale_model_2025, pairwise ~ Treatment) is called inline where needed
 
-# SUPPLEMENTARY FIGURES: TSD and Deformation -----------------------------------
+# ==============================================================================
+# SUPPLEMENTARY FIGURES: TSD and Deformation
+# ==============================================================================
 # Create publication-quality figures for tuber size distribution and deformation
 
 # --- Prepare deformation data for visualization -----
@@ -150,8 +153,12 @@ fig_combined <- (fig_TSD_w + plot_spacer()+(fig_deformation + theme(legend.posit
 print(fig_combined)
 save_plot(fig_combined, "figS_TSD_deformation_combined", width = 7, height = 5)
 
-# 3. MARKETABLE YIELD AND SECONDARY GROWTH PERCENTAGES -------------------------
-# Market: ≥50mm tubers; Secondary: deformed/secondary growth; Undersized: <50mm
+# ==============================================================================
+# 3. MARKETABLE YIELD AND SECONDARY GROWTH PERCENTAGES
+# ==============================================================================
+# Market: ≥50 mm tubers; Secondary: deformed/secondary growth; Undersized: <50 mm
+# AC/HTI cross-season model tests whether the HTI effect is consistent
+# across both seasons (Treatment:Season interaction)
 tuber_w_pct <- fread("data/tuber_w_pct_combined.csv")
 
 market_2024 <- droplevels(tuber_w_pct[Season == "2024"])
@@ -186,8 +193,9 @@ sec_ac_hti_model <- lm(Secondary_pct ~ Block + Season + Treatment + Season:Treat
 Anova(sec_ac_hti_model, type = "II")
 shapiro.test(sec_ac_hti_model$residuals)
 # 4. AVERAGE TUBER WEIGHT (AVT) -----------------------------------------------
-
 # AVT = Total tuber weight / Total tuber number per plot
+# Also derived: tuber number per m² (density)
+# AC/HTI cross-season model checks whether HTI effect on AVT is consistent
 tuber_avt <- fread("data/tuber_avt_combined.csv")
 tuber_avt[, avt := weight_of_tubers / number_of_tubers]
 tuber_avt[, tuber_n_per_m2 := number_of_tubers / (number_of_plants * 0.75 * 0.3)]
@@ -235,7 +243,9 @@ Anova(number_model_ac_hti, type = "II")
 results_number_ac_hti <- extract_emmeans_results(number_model_ac_hti, "AC_HTI")
 
 # 5. FRYING COLOUR QUALITY------------------------------------------------------
-# Lower frying index = better colour quality
+# Lower frying index = better colour quality (darker fry = higher index)
+# AC/HTI cross-season model assesses whether HTI effect on fry quality persists
+# across seasons
 frying_colour_data <- fread("data/frying_colour_data.csv")
 
 fc_2024 <- droplevels(frying_colour_data[Season == "2024" & !is.na(Fry.index)])
@@ -251,6 +261,12 @@ fc_model_ac_hti <- lm(Fry.index ~ Block + Treatment + Season + Treatment:Season,
 summary(fc_model_ac_hti)
 Anova(fc_model_ac_hti, type = "II")
 emm_fc_ac_hti <- emmeans(fc_model_ac_hti, pairwise ~ Treatment | Season)
+
+# ==============================================================================
+# 6. FRESH TUBER YIELD (t/ha)
+# ==============================================================================
+# Fresh yield derived from AVT dataset; converted to g/m² using plot plant area
+# AC/HTI cross-season model included to test consistency of yield response
 # 0. FRESH TUBER YIELD (t/ha) -------------------------------------------------
 tuber_avt[, area := number_of_plants * 0.75 * 0.3]
 tuber_avt[, fresh_yield_g_m2 := weight_of_tubers / area ]  # Convert to kg/ha
