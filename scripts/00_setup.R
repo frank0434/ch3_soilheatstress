@@ -26,23 +26,13 @@ get_season_constants <- function(season) {
   if (season == "2024") {
     constants$plants_detailed <- 3
     constants$plants_remaining <- 9
-    constants$planting_date <- as.Date("2024-05-13")
     constants$final_harvest_DAP <- 120
-    constants$HE_start <- as.Date("2024-06-07")
-    constants$HE_end <- as.Date("2024-06-21")
-    constants$HTI_start <- as.Date("2024-06-28")
-    constants$HTI_end <- as.Date("2024-07-15")
   } else if (season == "2025") {
     constants$plants_harvested_intermediate <- 6
     constants$plants_harvested_final <- 12
-    constants$planting_date <- as.Date("2025-05-07")
     constants$final_harvest_DAP <- 111
     constants$intermediate_scale_factor <- 12 / 6  # 2
     constants$final_scale_factor <- 12 / 12        # 1
-    constants$HTI_start <- as.Date("2025-06-13")
-    constants$HTI_end <- as.Date("2025-06-29")
-    constants$HB_start <- as.Date("2025-07-12")
-    constants$HB_end <- as.Date("2025-07-28")
   }
   
   return(constants)
@@ -146,23 +136,10 @@ treatment_rect_dt <- treatment_rect_dt[
 ]
 
 # constants for curve fitting  --------------------------------------------
-
 # Define constants -------------------------------------------------------------
 EXCLUDE_PLOT_2025 <- 8  # Plot to exclude in 2025 season
 CANOPY_DEATH_DAP_2025 <- 98  # Day after planting when canopy died in 2025
 CANOPY_DEATH_DAP_2024 <- 108# VALUE from Canopy cover curve drop below 0.05
-
-# key time points  --------------------------------------------------------
-
-# treatments_DAP
-# leaf_removal_dates
-# Season_start_end
-# tar_load(daily_td)
-# daily_td[Date == leaf_removal_dates$`2024`]
-# daily_td[Date == leaf_removal_dates$`2025`]
-
-
-
 
 
 
